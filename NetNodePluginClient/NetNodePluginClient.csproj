@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net5.0</TargetFramework>
+    <AssemblyName>NetNodePluginClient</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="EtherealC" Version="0.6.3" />
+    <PackageReference Include="EtherealS" Version="1.2.9" />
+  </ItemGroup>
+
+</Project>
