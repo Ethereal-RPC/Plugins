@@ -41,7 +41,7 @@ namespace NetNodePluginClient
                 }
             }).Start();
         }
-         /// <summary>
+        /// <summary>
         /// 分布式模式Demo
         /// </summary>
         /// <param name="netName">网关名</param>

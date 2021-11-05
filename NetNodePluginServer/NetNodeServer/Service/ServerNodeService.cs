@@ -1,16 +1,25 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Text;
-using EtherealS.Core.Model;
-using NetNodePlugin.NetNodeServer.Request;
-using EtherealS.Service.WebSocket;
+﻿using EtherealS.Core.Model;
+using EtherealS.Net;
+using EtherealS.Net.Abstract;
+using EtherealS.Request;
 using EtherealS.Server.Abstract;
+using EtherealS.Service.WebSocket;
 using NetNodePlugin.Model;
+using NetNodePlugin.NetNodeClient.Request;
+using NetNodePlugin.NetNodeClient.Service;
+using NetNodePlugin.NetNodeServer.Request;
+using NetNodePluginServer.NetNodeServer.Service;
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
 
 namespace NetNodePlugin.NetNodeServer.Service
 {
     public class ServerNodeService:WebSocketService
     {
+        private AutoResetEvent connectSign = new AutoResetEvent(false);
         public ServerNodeService()
         {
             name = "ServerNetNodeService";
@@ -24,7 +33,7 @@ namespace NetNodePlugin.NetNodeServer.Service
         /// <summary>
         /// 节点信息
         /// </summary>
-        private Dictionary<string, Tuple<Token,Model.NetNode>> netNodes = new ();
+        private Dictionary<string, Tuple<Token,NetNode>> netNodes = new ();
         /// <summary>
         /// 分布式请求
         /// </summary>
@@ -34,18 +43,13 @@ namespace NetNodePlugin.NetNodeServer.Service
         /// <summary>
         /// 分布式IP组
         /// </summary>
-        private List<Tuple<string, EtherealC.Client.Abstract.ClientConfig>> netNodeIps;
-
+        private List<string> netNodeIps;
         #endregion
 
         #region --属性--
-
         public ClientNodeRequest DistributeRequest { get => distributeRequest; set => distributeRequest = value; }
-        public Dictionary<string, Tuple<Token, Model.NetNode>> NetNodes { get => netNodes; set => netNodes = value; }
-
-        public List<Tuple<string, EtherealC.Client.Abstract.ClientConfig>> NetNodeIps { get => netNodeIps; set => netNodeIps = value; }
+        public Dictionary<string, Tuple<Token, NetNode>> NetNodes { get => netNodes; set => netNodes = value; }
         #endregion
-
 
         #region --RPC方法--
 
@@ -112,7 +116,6 @@ namespace NetNodePlugin.NetNodeServer.Service
 
         #endregion
 
-
         #region --普通方法--
         /// <summary>
         /// 如果断开连接，字典中删掉该节点
@@ -137,12 +140,139 @@ namespace NetNodePlugin.NetNodeServer.Service
 
         public override void Initialize()
         {
+            #region --Server--
+            if (!NetCore.Get(netName, out Net net))
+            {
+                //向网关注册请求
+                throw new TrackException($"{name}服务查询{netName}网关时未找到");
+            }
+            distributeRequest = RequestCore.Register<ClientNodeRequest, IClientNodeRequest>(net);
+            #endregion
+
+            #region --Client--
+            Thread thread = new Thread(() =>
+            {
+                while (NetCore.Get(NetName, out Net temp))
+                {
+                    try
+                    {
+                        foreach (string prefixes in
+                            (config as ServerNodeServiceConfig).NetNodeIps)
+                        {
+                            if (!EtherealC.Net.NetCore.Get($"NetNodeClient-{name}",
+                                out EtherealC.Net.Abstract.Net net))
+                            {
+                                net = EtherealC.Net.NetCore.Register(new EtherealC.Net.WebSocket.WebSocketNet($"NetNodeClient-{name}"));
+                                net.LogEvent += Net_LogEvent;
+                                net.ExceptionEvent += Net_ExceptionEvent;
+                            }
+
+                            if (!EtherealC.Request.RequestCore.Get(net, $"ServerNetNodeService", out ServerNodeRequest serverNodeRequest))
+                            {
+                                //注册请求
+                                serverNodeRequest = EtherealC.Request.RequestCore.Register<ServerNodeRequest, IServerNodeRequest>(net);
+                            }
+
+                            if (!EtherealC.Service.ServiceCore.Get(net, "ClientNetNodeService", out ClientNodeService clientNodeService))
+                            {
+                                //注册服务
+                                clientNodeService = EtherealC.Service.ServiceCore.Register(net, new ClientNodeService());
+                            }
+
+                            if (serverNodeRequest.Client == null)
+                            {
+                                EtherealC.Client.Abstract.Client client =
+                                    new EtherealC.Client.WebSocket.WebSocketClient(prefixes);
+                                //注册连接
+                                EtherealC.Client.ClientCore.Register(serverNodeRequest, client);
+                                client.ConnectEvent += ClientConnectSuccessEvent;
+                                client.ConnectFailEvent += ClientConnectFailEvent;
+                                client.DisConnectEvent += ClientDisConnectEvent;
+                                //部署
+                                net.Publish();
+                            }
+                        }
+                    }
+                    catch (Exception e)
+                    {
+                        OnException(new TrackException(e));
+                    }
+                    finally
+                    {
+                        connectSign.WaitOne((config as ServerNodeServiceConfig).NetNodeHeartInterval);
+                    }
+                }
+            });
+            thread.Start();
+            #endregion
             Console.WriteLine($"{name}服务已部署");
         }
 
         public override void UnInitialize()
         {
             Console.WriteLine($"{name}服务已注销");
+        }
+
+
+        private void Net_LogEvent(EtherealC.Core.Model.TrackLog log)
+        {
+            OnLog(TrackLog.LogCode.Runtime, "NetNodeClient\n" + log.Message);
+        }
+        private void Net_ExceptionEvent(EtherealC.Core.Model.TrackException exception)
+        {
+            OnException(new TrackException(exception));
+        }
+
+        private void ClientConnectSuccessEvent(EtherealC.Client.Abstract.Client client)
+        {
+            if (!NetCore.Get(netName, out Net net))
+            {
+                //向网关注册请求
+                throw new TrackException($"{name}服务查询{netName}网关时未找到");
+            }
+            //注册节点信息
+            if (EtherealC.Request.RequestCore.Get($"NetNodeClient-{client.Prefixes}", "ServerNetNodeService", out EtherealC.Request.Abstract.Request serverDistributeRequest))
+            {
+                //生成节点信息
+                NetNode node = new NetNode();
+                node.Prefixes = net.Server.Prefixes.ToArray();
+                node.Name = $"{name}";
+                node.HardwareInformation = new HardwareInformation();
+                node.HardwareInformation.NetworkInterfaces = Utils.NetworkInterfaceHelper.GetAllNetworkInterface();
+                node.HardwareInformation.Is64BitOperatingSystem = Environment.Is64BitOperatingSystem.ToString();
+                node.HardwareInformation.ProcessArchitecture = RuntimeInformation.ProcessArchitecture.ToString();
+                node.HardwareInformation.OSArchitecture = RuntimeInformation.OSArchitecture.ToString();
+                node.HardwareInformation.OSDescription = RuntimeInformation.OSDescription.ToString();
+                node.Services = new Dictionary<string, ServiceNode>();
+                node.Requests = new Dictionary<string, RequestNode>();
+                //添加服务信息
+                foreach (EtherealS.Service.Abstract.Service service in net.Services.Values)
+                {
+                    ServiceNode serviceNode = new ServiceNode();
+                    serviceNode.Name = service.Name;
+                    node.Services.Add(serviceNode.Name, serviceNode);
+                }
+                //添加请求信息    
+                foreach (EtherealS.Request.Abstract.Request request in net.Requests.Values)
+                {
+                    RequestNode requestNode = new RequestNode();
+                    requestNode.Name = request.Name;
+                    node.Requests.Add(requestNode.Name, requestNode);
+                }
+                //向目标主机注册节点信息
+                ((IServerNodeRequest)serverDistributeRequest).Register(node);
+            }
+            else throw new TrackException(TrackException.ErrorCode.Runtime, $"EtherealC中未找到 NetNodeClient-{client.Prefixes}-ServerNodeService");
+        }
+
+        private void ClientConnectFailEvent(EtherealC.Client.Abstract.Client client)
+        {
+            EtherealC.Client.ClientCore.UnRegister(client.NetName, client.ServiceName);
+        }
+        private void ClientDisConnectEvent(EtherealC.Client.Abstract.Client client)
+        {
+            EtherealC.Client.ClientCore.UnRegister(client.NetName, client.ServiceName);
+            connectSign.Set();
         }
         #endregion
 

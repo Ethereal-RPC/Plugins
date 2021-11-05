@@ -15,12 +15,12 @@ namespace NetNodePlugin
         EtherealC.Client.Abstract.ClientConfig clientConfig = new EtherealC.Client.WebSocket.WebSocketClientConfig();
         //开启集群
         net.Config.NetNodeMode = false;
-            //添加集群地址
-            ips.Add(new Tuple<string, EtherealC.Client.Abstract.ClientConfig>($"ethereal://{ip}:{28015}/NetDemo/", clientConfig));
-            ips.Add(new Tuple<string, EtherealC.Client.Abstract.ClientConfig>($"ethereal://{ip}:{28016}/NetDemo/", clientConfig));
-            ips.Add(new Tuple<string, EtherealC.Client.Abstract.ClientConfig>($"ethereal://{ip}:{28017}/NetDemo/", clientConfig));
-            ips.Add(new Tuple<string, EtherealC.Client.Abstract.ClientConfig>($"ethereal://{ip}:{28018}/NetDemo/", clientConfig));
-            net.Config.NetNodeIps = ips;
+        //添加集群地址
+        ips.Add(new Tuple<string, EtherealC.Client.Abstract.ClientConfig>($"ethereal://{ip}:{28015}/NetDemo/", clientConfig));
+        ips.Add(new Tuple<string, EtherealC.Client.Abstract.ClientConfig>($"ethereal://{ip}:{28016}/NetDemo/", clientConfig));
+        ips.Add(new Tuple<string, EtherealC.Client.Abstract.ClientConfig>($"ethereal://{ip}:{28017}/NetDemo/", clientConfig));
+        ips.Add(new Tuple<string, EtherealC.Client.Abstract.ClientConfig>($"ethereal://{ip}:{28018}/NetDemo/", clientConfig));
+        net.Config.NetNodeIps = ips;
         /// <summary>
         /// 部署节点
         /// </summary>
